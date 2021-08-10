@@ -1,0 +1,17 @@
+{
+	"plugins": {
+		"checkmk": {
+			"cron": "40 3 * * *",
+			"maxCpus": 1
+		}
+	},
+	"urls": [{
+			"url": "https://biodiversity.europa.eu/",
+			"plugins": {}
+		},
+		{
+			"url": "https://helpdesk.eionet.europa.eu/",
+			"plugins": {}
+		}
+	]
+}
