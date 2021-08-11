@@ -8,7 +8,7 @@ const URL = require('url').URL;
 const CMK_SERVER = process.env.CMK_SERVER || "goldeneye.eea.europa.eu";
 const CMK_SITE_NAME = process.env.CMK_SITE_NAME || "omdeea";
 
-const USERNAME = process.env.USERNAME || "cmkapi-omdeea";
+const USERNAME = process.env.USERNAME_CHECKMK || "cmkapi-omdeea";
 const SECRET = process.env.SECRET || "";
 
 let servByHost = {};
@@ -261,7 +261,7 @@ function getServicesByHost(hostname) {
 function getHosts() {
   if (SECRET.length === 0) {
     throw "Could not log into checkmk server to get data.";
-  } 
+  }
   const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
   const bash_func = `curl ${API_URL} 2>/dev/null`;
   try {
