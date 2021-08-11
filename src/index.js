@@ -253,7 +253,6 @@ function getServicesByHost(hostname) {
 
   } catch (err) {
     console.log('Could not get services by host', err);
-    reject ('Could not get services by host', err);
   }
 
 }
@@ -280,7 +279,6 @@ function getHosts() {
     }
   } catch(err) {
     console.log("Could not get hosts from checkmk.", err);
-    reject("Could not get hosts from checkmk.", err);
   }
 }
 
