@@ -6,8 +6,8 @@
 
 **Highlights**
 
--   Poll for checkmk uptime metrics on any website and stores the data into InfluxDB
--   Obtain a score for each website, based on the time it was up, one for one day and one for one month(30 days).
+-   Polls for checkmk metrics on given websites and stores the data into InfluxDB.
+-   Obtains a score for each website, based on the time it was up, one for one day and one for one month(30 days).
 -   Setup within minutes.
 
 ## Overview of garie-checkmk
@@ -60,7 +60,7 @@ Next setup you're config. Edit the `config.json` and add websites to the list.
 }
 ```
 
-Once you finished edited your config, set environmental variables and lets build our docker image and setup our environment.
+Once you finished editing your config, let's set the environmental variables, build the docker image and setup our environment.
 Set variables as described in set variables and usage section.
 
 ```sh
@@ -69,14 +69,15 @@ docker build -t garie-checkmk . && docker-compose up
 
 For dev environment, change the setup command.
 ```sh
-docker-compose -f docker-compose -dev.yml up --build
+docker-compose -f docker-compose-dev.yml up --build
 ```
 
 This will build your copy of `garie-checkmk` and run the application.
 
-On start garie-checkmk will start to gather performance metrics for the websites added to the `config.json`.
+On start garie-checkmk will query for all the hosts available on the checkmk server and match each website given in config with its host. Then it will make queries to gather availability data for the websites.
 
-For more information please go to the [garie-plugin](https://github.com/eea/garie-plugin) repo.
+For more information please go to the [Checkmk Documentation](https://docs.checkmk.com/latest/en/).
+
 
 ## Data collected
 
@@ -84,13 +85,13 @@ You can view checkmk scores in the reports.
 
 Garie-checkmk filters what data is stored into influxDB. The score is on a scale of 0-100, where 100 means no
 downtime and 0 means the website was down all the time. To avoid multiple requests to checkmk, the 30 days score
-is saved in the database, and for the next 30 days the score is calculated in a sliding window fashion, using the
-oldest day score in the last 30 days and yesterday's score to update the last 30 days score.
+is saved in the database, and for the next 30 days the score is calculated in a sliding window fashion, replacing the
+oldest day score in the last 30 days with yesterday's score to update the last 30 days score.
 
 | Property                | Type     | Description                             |
 | ----------------------- | -------- | --------------------------------------- |
-| `cmk30DaysScore`        | `number` | Uptime score for the last 30 days.      |
-| `cmk1DayScore`          | `number` | Uptime score for the last 30 days.      |
+| `cmk30DaysScore`        | `number` | Uptime score for the last 30 days (updated daily).      |
+| `cmk1DayScore`          | `number` | Uptime score for 1 day (computed daily).      |
 
 ## config.json
 
@@ -116,13 +117,13 @@ oldest day score in the last 30 days and yesterday's score to update the last 30
 
 
 ## Variables
-This are the variables that should be set:
+These are the variables that should be set:
 
-- CMK_SERVER              - the checkmk server address(hostname).
-- CMK_SITE_NAME           - the checkmk site name.
+- CMK_SERVER              - the checkmk server address(hostname) (default set to "goldeneye.eea.europa.eu").
+- CMK_SITE_NAME           - the checkmk site name (default set to "omdeea").
 - USERNAME_CHECKMK, SECRET- the automation user\'s username and secret.
 - GAP_BETWEEN_INCIDENTS   - defaulting to 6, can be optionally modified, if necessary.
 
 To use them in the docker-compose way, add them to the garie-plugin service or use a .env file.
 
-For more information please go to the garie-plugin repo.
+For more information please go to the [garie-plugin](https://github.com/eea/garie-plugin) repo.
