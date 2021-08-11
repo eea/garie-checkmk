@@ -7,7 +7,7 @@
 **Highlights**
 
 -   Polls for checkmk metrics on given websites and stores the data into InfluxDB.
--   Obtains a score for each website, based on the time it was up, one for one day and one for one month(30 days).
+-   Obtains a score for each website, based on the time it was up, one for one day and one for one month (30 days).
 -   Setup within minutes.
 
 ## Overview of garie-checkmk
@@ -60,7 +60,7 @@ Next setup you're config. Edit the `config.json` and add websites to the list.
 }
 ```
 
-Once you finished editing your config, let's set the environmental variables, build the docker image and setup our environment.
+Once you finished editing your config, let's set the environment variables, build the docker image and setup our environment.
 Set variables as described in set variables and usage section.
 
 ```sh
