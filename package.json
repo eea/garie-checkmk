@@ -1,6 +1,6 @@
 {
     "name": "garie-checkmk",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "description": "Checkmk availability score",
     "engines": {
         "node": ">=6"

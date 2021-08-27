@@ -18,10 +18,8 @@ const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 6;
 // actual run cmd get graph
 function getGraph(startTime, endTime, serviceNeeded, host) {
   const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_graph&_username=${USERNAME}&_secret=${SECRET}"`; 
-  const bash_func = `curl ${API_URL} -d 'request={"specification":["template",\
-  {"service_description":"${serviceNeeded}","site":"${CMK_SITE_NAME}","graph_index":0,"host_name":"${host}"}],\
-  "data_range":{"time_range":[${startTime}, ${endTime}]}}' 2>/dev/null`;
-  const stdout =  execSync(bash_func);  // this can be made async
+  const bash_func = `curl ${API_URL} -d 'request={"specification":["template", {"service_description":"${serviceNeeded}","site":"${CMK_SITE_NAME}","graph_index":0,"host_name":"${host}"}], "data_range":{"time_range":[${startTime}, ${endTime}]}}' 2>/dev/null`;
+  const stdout =  execSync(bash_func);
   return JSON.parse(stdout);
 }
 
@@ -50,8 +48,8 @@ function getDownTime(ans) {
         obsIncident = true;
       }
     } else if(obsIncident){
-      if (GAP_BETWEEN_INCIDENTS >= 1) {
-        GAP_BETWEEN_INCIDENTS--;
+      if (gap >= 1) {
+        gap--;
       } else {
         gap = process.env.GAP_BETWEEN_INCIDENTS || 6;
         obsIncident = false;
