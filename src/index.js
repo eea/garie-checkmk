@@ -18,7 +18,7 @@ const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 6;
 // actual run cmd get graph
 function getGraph(startTime, endTime, serviceNeeded, host) {
   const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_graph&_username=${USERNAME}&_secret=${SECRET}"`; 
-  const bash_func = `curl ${API_URL} -d 'request={"specification":["template", {"service_description":"${serviceNeeded}","site":"${CMK_SITE_NAME}","graph_index":0,"host_name":"${host}"}], "data_range":{"time_range":[${startTime}, ${endTime}]}}' 2>/dev/null`;
+  const bash_func = `curl ${API_URL} -d 'request={"specification":["template", {"service_description":"${serviceNeeded}","site":"${CMK_SITE_NAME}","graph_index":0,"host_name":"${host}"}], "data_range":{"time_range":[${startTime}, ${endTime}]}}'`;
   const stdout =  execSync(bash_func);
   return JSON.parse(stdout);
 }
@@ -201,6 +201,7 @@ async function getCheckmkScore(item, url) {
     if (result !== undefined) {
       data = computeScore(result);
     }
+    console.log(`The current result for ${url} is ${data.cmk1DayScore} and the 30 day result is ${data.cmk30DaysScore}`);
     return data;
   } catch (err) {
     console.log(`Failed to get checkmk graph for ${url}`, err);
@@ -232,7 +233,7 @@ function getServicesByHost(hostname) {
 
   
   const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_metrics_of_host&_username=${USERNAME}&_secret=${SECRET}"`;
-  const bash_func = `curl ${API_URL} -d 'request={"hostname":"${hostname}", "site_id":"${CMK_SITE_NAME}"}' 2>/dev/null`;
+  const bash_func = `curl ${API_URL} -d 'request={"hostname":"${hostname}", "site_id":"${CMK_SITE_NAME}"}'`;
   try {
     const stdout = execSync(bash_func);
     const response = JSON.parse(stdout);
@@ -260,7 +261,7 @@ function getHosts() {
     throw "Could not log into checkmk server to get data.";
   }
   const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
-  const bash_func = `curl ${API_URL} 2>/dev/null`;
+  const bash_func = `curl ${API_URL}`;
   try {
     const stdout =  execSync(bash_func);
     const response = JSON.parse(stdout);
