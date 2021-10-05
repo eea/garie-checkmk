@@ -6,7 +6,8 @@ const { execSync } = require('child_process');
 const URL = require('url').URL;
 
 const CMK_SERVER = process.env.CMK_SERVER || "goldeneye.eea.europa.eu";
-const CMK_SITE_NAME = process.env.CMK_SITE_NAME || "omdeea";
+const CMK_SITES = process.env.CMK_SITE_NAMES || "omdeea";
+const CMK_SITE_NAMES = CMK_SITES.split(',');
 
 const USERNAME = process.env.USERNAME_CHECKMK || "cmkapi-omdeea";
 const SECRET = process.env.SECRET || "";
@@ -16,9 +17,9 @@ let influx;
 const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 6;
 
 // actual run cmd get graph
-function getGraph(startTime, endTime, serviceNeeded, host) {
-  const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_graph&_username=${USERNAME}&_secret=${SECRET}"`; 
-  const bash_func = `curl ${API_URL} -d 'request={"specification":["template", {"service_description":"${serviceNeeded}","site":"${CMK_SITE_NAME}","graph_index":0,"host_name":"${host}"}], "data_range":{"time_range":[${startTime}, ${endTime}]}}'`;
+function getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName) {
+  const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_graph&_username=${USERNAME}&_secret=${SECRET}"`; 
+  const bash_func = `curl ${API_URL} -d 'request={"specification":["template", {"service_description":"${serviceNeeded}","site":"${cmkSiteName}","graph_index":0,"host_name":"${host}"}], "data_range":{"time_range":[${startTime}, ${endTime}]}}'`;
   const stdout =  execSync(bash_func);
   return JSON.parse(stdout);
 }
@@ -67,7 +68,7 @@ function getDownTime(ans) {
   return result;
 }
 
-function getDayResults(serviceNeeded, host, offset) {
+function getDayResults(serviceNeeded, host, offset, cmkSiteName) {
   const endDate = new Date();
   endDate.setUTCHours(0, 0, 0, 0);
   endDate.setUTCMinutes(endDate.getTimezoneOffset());  // use TZ time by setting the offset
@@ -77,7 +78,7 @@ function getDayResults(serviceNeeded, host, offset) {
   const endTime = Math.floor(endDate.getTime() / 1000);
   const startTime = Math.floor(startDate.getTime() / 1000);
 
-  const response = getGraph(startTime, endTime, serviceNeeded, host);
+  const response = getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName);
   
   // aici valori
   let result = {};
@@ -87,7 +88,7 @@ function getDayResults(serviceNeeded, host, offset) {
   return result;
 }
 
-function getMonthResults(serviceNeeded, host) {
+function getMonthResults(serviceNeeded, host, cmkSiteName) {
   let result = {
     downtime:0,
     incidents:{
@@ -96,7 +97,7 @@ function getMonthResults(serviceNeeded, host) {
     }
   };
   for (i = 30; i > 0; --i) {
-    partial = getDayResults(serviceNeeded, host, -(i-1));
+    partial = getDayResults(serviceNeeded, host, -(i-1), cmkSiteName);
     result.downtime += partial.downtime;
     result.incidents.day += partial.incidents.day;
     result.incidents.night += partial.incidents.night;
@@ -114,23 +115,27 @@ function getParams(url) {
   
   let host;
   let serviceNeeded;
+  let site;
 
   for (const key in servByHost) {
-    for (const {service, cmd} of servByHost[key]) {
-      if (cmd.endsWith(`'${siteName}'`) && service.includes(siteName)) {
-        host = key;
-        serviceNeeded = service;
+    for (const cmkSite in servByHost[key]) {
+      for (const {service, cmd} of servByHost[key][cmkSite]) {
+        if (cmd.endsWith(`'${siteName}'`) && service.includes(siteName)) {
+          host = key;
+          serviceNeeded = service;
+          site = cmkSite;
+        }
       }
     }
   }
 
-  return {serviceNeeded, host};
+  return {serviceNeeded, host, cmkSiteName:site};
 }
 
 
 async function getResults(url) {
   
-  const {serviceNeeded, host} = getParams(url);
+  const {serviceNeeded, host, cmkSiteName} = getParams(url);
   if (serviceNeeded === undefined) {
     return {};
   }
@@ -139,7 +144,7 @@ async function getResults(url) {
   try {
     const lastScore = await garie_plugin.utils.helpers.getLastEntry(influx, 'checkmk', 'cmk30DaysScore', 'score');
     if (lastScore === -1 || lastScore === undefined) {
-      monthResult = getMonthResults(serviceNeeded, host); 
+      monthResult = getMonthResults(serviceNeeded, host, cmkSiteName); 
     } else {
       monthResult = lastScore;
     }
@@ -149,7 +154,7 @@ async function getResults(url) {
 
   let todayResult;
   try{
-    todayResult = getDayResults(serviceNeeded, host, 0);
+    todayResult = getDayResults(serviceNeeded, host, 0, cmkSiteName);
   } catch (err) {
     console.log(`Could not compute today's result for ${url}`, err);
   }
@@ -229,11 +234,11 @@ const myGetData = async (item) => {
 
 console.log("Start");
 
-function getServicesByHost(hostname) {
+function getServicesByHost(hostname, cmkSiteName) {
 
   
-  const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_metrics_of_host&_username=${USERNAME}&_secret=${SECRET}"`;
-  const bash_func = `curl ${API_URL} -d 'request={"hostname":"${hostname}", "site_id":"${CMK_SITE_NAME}"}'`;
+  const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_metrics_of_host&_username=${USERNAME}&_secret=${SECRET}"`;
+  const bash_func = `curl ${API_URL} -d 'request={"hostname":"${hostname}", "site_id":"${cmkSiteName}"}'`;
   try {
     const stdout = execSync(bash_func);
     const response = JSON.parse(stdout);
@@ -241,12 +246,13 @@ function getServicesByHost(hostname) {
     const services = response["result"];
     for (let key in services) {
       if (key.includes("http") || key.includes("HTTP")) {
-          const servs = servByHost[hostname] || [];
+          servByHost[hostname] = servByHost[hostname] || {};
+          const servs = servByHost[hostname][cmkSiteName] || [];
           servs.push({
               service: key,
-              cmd: services[key]['check_command']
+              cmd: services[key]['check_command'],
           });
-          servByHost[hostname] = servs;
+          servByHost[hostname][cmkSiteName] = servs;
       }
     }
 
@@ -260,22 +266,26 @@ function getHosts() {
   if (SECRET.length === 0) {
     throw "Could not log into checkmk server to get data.";
   }
-  const API_URL = `"https://${CMK_SERVER}/${CMK_SITE_NAME}/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
-  const bash_func = `curl ${API_URL}`;
+  
   try {
-    const stdout =  execSync(bash_func);
-    const response = JSON.parse(stdout);
+      const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
+      const bash_func = `curl ${API_URL}`;
 
-    const all_hosts = response["result"];
-    let hosts = [];
-    for (const host of all_hosts) {
-      if (host.includes('-f')) {
-        hosts.push(host);
+      const stdout =  execSync(bash_func);
+      const response = JSON.parse(stdout);
+
+      const all_hosts = response["result"];
+      let hosts = new Set();
+      for (const host of all_hosts) {
+        if (host.includes('-f')) {
+          hosts.add(host);
+        }
       }
-    }
-    for (const host of hosts) {
-        getServicesByHost(host);
-    }
+      for (const host of hosts) {
+        for (const cmkSiteName of CMK_SITE_NAMES) {
+          getServicesByHost(host, cmkSiteName);
+        }
+      }
   } catch(err) {
     console.log("Could not get hosts from checkmk.", err);
   }
