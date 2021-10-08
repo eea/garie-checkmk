@@ -121,7 +121,7 @@ function getParams(url) {
   for (const key in servByHost) {
     for (const cmkSite in servByHost[key]) {
       for (const {service, cmd} of servByHost[key][cmkSite]) {
-        if (cmd.endsWith(`'${siteName}'`) && (!foundOne || service.includes(`'${sitename}'`))) {
+        if (cmd.endsWith(`'${siteName}'`) && (!foundOne || service.includes(`'${siteName}'`))) {
           foundOne = true;
           host = key;
           serviceNeeded = service;
