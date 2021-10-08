@@ -112,15 +112,17 @@ function getMonthResults(serviceNeeded, host, cmkSiteName) {
 function getParams(url) {
   const urlObj = new URL(url);
   siteName = urlObj.hostname;
-  
+
   let host;
   let serviceNeeded;
   let site;
 
+  let foundOne = false;
   for (const key in servByHost) {
     for (const cmkSite in servByHost[key]) {
       for (const {service, cmd} of servByHost[key][cmkSite]) {
-        if (cmd.endsWith(`'${siteName}'`) && service.includes(siteName)) {
+        if (cmd.endsWith(`'${siteName}'`) && (!foundOne || service.includes(`'${sitename}'`))) {
+          foundOne = true;
           host = key;
           serviceNeeded = service;
           site = cmkSite;
@@ -134,7 +136,6 @@ function getParams(url) {
 
 
 async function getResults(url) {
-  
   const {serviceNeeded, host, cmkSiteName} = getParams(url);
   if (serviceNeeded === undefined) {
     return {};
