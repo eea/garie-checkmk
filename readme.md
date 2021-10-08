@@ -120,7 +120,7 @@ oldest day score in the last 30 days with yesterday's score to update the last 3
 These are the variables that should be set:
 
 - CMK_SERVER              - the checkmk server address(hostname) (default set to "goldeneye.eea.europa.eu").
-- CMK_SITE_NAME           - the checkmk site name (default set to "omdeea").
+- CMK_SITE_NAMES           - the checkmk site names (default set to "omdeea").
 - USERNAME_CHECKMK, SECRET- the automation user\'s username and secret.
 - GAP_BETWEEN_INCIDENTS   - defaulting to 6, can be optionally modified, if necessary.
 
