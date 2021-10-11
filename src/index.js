@@ -6,7 +6,7 @@ const { execSync } = require('child_process');
 const URL = require('url').URL;
 
 const CMK_SERVER = process.env.CMK_SERVER || "goldeneye.eea.europa.eu";
-const CMK_SITES = process.env.CMK_SITE_NAMES || "omdeea";
+const CMK_SITES = process.env.CMK_SITE_NAMES || "omdeea,omdeeaaws";
 const CMK_SITE_NAMES = CMK_SITES.split(',');
 
 const USERNAME = process.env.USERNAME_CHECKMK || "cmkapi-omdeea";
@@ -112,7 +112,6 @@ function getMonthResults(serviceNeeded, host, cmkSiteName) {
 function getParams(url) {
   const urlObj = new URL(url);
   siteName = urlObj.hostname;
-
   let host;
   let serviceNeeded;
   let site;
@@ -240,6 +239,7 @@ function getServicesByHost(hostname, cmkSiteName) {
   
   const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_metrics_of_host&_username=${USERNAME}&_secret=${SECRET}"`;
   const bash_func = `curl ${API_URL} -d 'request={"hostname":"${hostname}", "site_id":"${cmkSiteName}"}'`;
+
   try {
     const stdout = execSync(bash_func);
     const response = JSON.parse(stdout);
@@ -271,14 +271,13 @@ function getHosts() {
   try {
       const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
       const bash_func = `curl ${API_URL}`;
-
       const stdout =  execSync(bash_func);
       const response = JSON.parse(stdout);
 
       const all_hosts = response["result"];
       let hosts = new Set();
       for (const host of all_hosts) {
-        if (host.includes('-f')) {
+        if (host.includes('-f') || host === "www.eea.europa.eu") {
           hosts.add(host);
         }
       }
