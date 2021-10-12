@@ -79,7 +79,7 @@ function getDayResults(serviceNeeded, host, offset, cmkSiteName) {
   const startTime = Math.floor(startDate.getTime() / 1000);
 
   const response = getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName);
-
+  // aici valori
   let result = {};
   if (response !== undefined && response['result'] !== undefined && response['result']['curves'] !== undefined) {
     result = getDownTime(response['result']['curves'][0]['rrddata']);
@@ -119,7 +119,7 @@ function getParams(url) {
   for (const key in servByHost) {
     for (const cmkSite in servByHost[key]) {
       for (const {service, cmd} of servByHost[key][cmkSite]) {
-        if (cmd.endsWith(`'${siteName}'`) && (!foundOne || service.includes(`'${siteName}'`))) {
+        if (cmd.endsWith(`'${siteName}'`) && (!foundOne || service.includes(`${siteName}`))) {
           foundOne = true;
           host = key;
           serviceNeeded = service;
