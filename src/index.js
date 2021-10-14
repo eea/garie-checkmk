@@ -161,7 +161,7 @@ async function getResults(url) {
     console.log(`Could not compute today's result for ${url}`, err);
   }
 
-  return {monthResult, todayResult};
+  return { monthResult, todayResult };
 }
 
 function computeScore(input) {
@@ -190,14 +190,16 @@ async function getCheckmkScore(item, url) {
   }
   try {
     const { reportDir } = item;
-    const reportFolder = garie_plugin.utils.helpers.reportDirNow(reportDir);
 
-    const resultsLocation = path.join(reportFolder, '/checkmk.txt');
+    const resultsLocation = path.join(reportDir, '/checkmk.txt');
 
     // get graph output for url;
     const result = await getResults(url);
 
-    fs.outputFile(resultsLocation, result)
+    const fileText = `Checkmk results for ${url}. Day / night incidents in the last 24h: ${result.todayResult.incidents.day} / ${result.todayResult.incidents.night}. \
+    Day / night incidents in the last month: ${result.monthResult.incidents.day * 30} / ${result.monthResult.incidents.night}.`
+
+    fs.outputFile(resultsLocation, fileText)
       .then(() => console.log(`Saved result for ${url}`))
       .catch(err => {
         console.log(`Error while computing checkmk score for ${url}`, err);
