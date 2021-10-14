@@ -270,6 +270,7 @@ function getHosts() {
     throw "Could not log into checkmk server to get data.";
   }
   
+  const additional_hosts = config.plugins.checkmk.additional_hosts;
   try {
       const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
       const bash_func = `curl ${API_URL}`;
@@ -279,7 +280,7 @@ function getHosts() {
       const all_hosts = response["result"];
       let hosts = new Set();
       for (const host of all_hosts) {
-        if (host.includes('-f') || host === "www.eea.europa.eu") {
+        if (host.includes('-f') || additional_hosts.includes(host)) {
           hosts.add(host);
         }
       }
