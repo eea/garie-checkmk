@@ -24,23 +24,31 @@ function getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName) {
   return JSON.parse(stdout);
 }
 
-function getDownTime(ans) {
+function getDownTime(ansArray) {
+
+
   let  mark_incident = 0;
   let incidents = {
     day: 0, night:0
   };
+  if (ansArray.length === 0) return {downtime: 0, incidents};
+
 
   let gap = GAP_BETWEEN_INCIDENTS;
-  let lastVal = 1;
+  let lastVal = [];
   let obsIncident = false;
   let timeIt = 300;
-  
-  for (const val of ans) {
-    if (val === 0 || val === null || val === undefined) {
+
+  ansArray = ansArray.filter((ans) => ans.length === 288);
+  const isIncident = (serviceValues) => serviceValues.length > 0 && serviceValues.reduce((previousValue, currentValue) => previousValue && (currentValue === 1 || currentValue === null || currentValue === undefined), true);
+
+  for (let i = 0; i < 288; i++) {
+    const serviceValues = ansArray.map((service) => service[i]);
+    if (isIncident(serviceValues)) {
       mark_incident++;
       if (obsIncident) {
         gap = process.env.GAP_BETWEEN_INCIDENTS || 6;
-      } else if (lastVal === 0 || lastVal === null || lastVal === undefined) {
+      } else if (isIncident(lastVal)) {
         if (timeIt > 25200 || timeIt < 7200) { // incident during the day
           incidents.day++;
         } else {
@@ -57,18 +65,19 @@ function getDownTime(ans) {
       }
     }
     
-    lastVal = val;
+    lastVal = serviceValues;
     timeIt += 300;
+
   }
 
   const result = {
     downtime: mark_incident / 288,
-    incidents: incidents,
+    incidents,
   }
   return result;
 }
 
-function getDayResults(serviceNeeded, host, offset, cmkSiteName) {
+function getDayResults(services, offset) {
   const endDate = new Date();
   endDate.setUTCHours(0, 0, 0, 0);
   endDate.setUTCMinutes(endDate.getTimezoneOffset());  // use TZ time by setting the offset
@@ -78,16 +87,12 @@ function getDayResults(serviceNeeded, host, offset, cmkSiteName) {
   const endTime = Math.floor(endDate.getTime() / 1000);
   const startTime = Math.floor(startDate.getTime() / 1000);
 
-  const response = getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName);
-  // aici valori
-  let result = {};
-  if (response !== undefined && response['result'] !== undefined && response['result']['curves'] !== undefined) {
-    result = getDownTime(response['result']['curves'][0]['rrddata']);
-  }
-  return result;
+  return getDownTime(services.map(({serviceNeeded, host, cmkSiteName}) => getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName))
+              .filter((graph) => graph !== undefined && graph['result'] !== undefined && graph['result']['curves'] !== undefined)
+              .map((graph) => graph['result']['curves'][0]['rrddata']));
 }
 
-function getMonthResults(serviceNeeded, host, cmkSiteName) {
+function getMonthResults(services) {
   let result = {
     downtime:0,
     incidents:{
@@ -96,7 +101,7 @@ function getMonthResults(serviceNeeded, host, cmkSiteName) {
     }
   };
   for (i = 30; i > 0; --i) {
-    partial = getDayResults(serviceNeeded, host, -(i-1), cmkSiteName);
+    partial = getDayResults(services, -(i-1));
     result.downtime += partial.downtime;
     result.incidents.day += partial.incidents.day;
     result.incidents.night += partial.incidents.night;
@@ -116,6 +121,9 @@ function getParams(url) {
   let site;
 
   let foundOne = false;
+
+  const multipleServices= [];
+
   for (const key in servByHost) {
     for (const cmkSite in servByHost[key]) {
       for (const {service, cmd} of servByHost[key][cmkSite]) {
@@ -125,28 +133,29 @@ function getParams(url) {
           serviceNeeded = service;
           site = cmkSite;
           if (service.includes("cachet")) {
-            return {serviceNeeded, host, cmkSiteName:site};
+            multipleServices.push({serviceNeeded, host, cmkSiteName:site});
           }
         }
       }
     }
   }
 
-  return {serviceNeeded, host, cmkSiteName:site};
+  if (multipleServices.length > 0) {
+    return multipleServices;
+  }
+
+  return [{serviceNeeded, host, cmkSiteName:site}];
 }
 
 
 async function getResults(url) {
-  const {serviceNeeded, host, cmkSiteName} = getParams(url);
-  if (serviceNeeded === undefined) {
-    return {};
-  }
+  const services = getParams(url);
 
   let monthResult;
   try {
     const lastScore = await garie_plugin.utils.helpers.getLastEntry(influx, 'checkmk', 'cmk30DaysScore', 'score');
     if (lastScore === -1 || lastScore === undefined) {
-      monthResult = getMonthResults(serviceNeeded, host, cmkSiteName); 
+      monthResult = getMonthResults(services); 
     } else {
       monthResult = lastScore;
     }
@@ -156,7 +165,7 @@ async function getResults(url) {
 
   let todayResult;
   try{
-    todayResult = getDayResults(serviceNeeded, host, 0, cmkSiteName);
+    todayResult = getDayResults(services, 0);
   } catch (err) {
     console.log(`Could not compute today's result for ${url}`, err);
   }
