@@ -212,6 +212,9 @@ async function getCheckmkScore(item, url) {
     }
     console.log(`The current result for ${url} is ${data.cmk1DayScore} and the 30 day result is ${data.cmk30DaysScore}`);
 
+    if (data.cmk30DaysScore < 0 || data.cmk1DayScore < 0) {
+      return data;
+    }
     const fileText = `Checkmk results for ${url}.  \n
     Day : night incidents in the last 24h - ${result.todayResult.incidents.day} : ${result.todayResult.incidents.night}. \n
     Day : night incidents in the last month - ${result.monthResult.incidents.day * 30} : ${result.monthResult.incidents.night * 30}. \n
