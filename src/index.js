@@ -195,17 +195,24 @@ async function getCheckmkScore(item, url) {
     // get graph output for url;
     const result = await getResults(url);
 
+    // compute score for url
+    let data = {};
+    if (result !== undefined) {
+      data = computeScore(result);
+    }
+    console.log(`The current result for ${url} is ${data.cmk1DayScore} and the 30 day result is ${data.cmk30DaysScore}`);
+
     const fileText = `Checkmk results for ${url}.  \n
-    Day / night incidents in the last 24h: ${result.todayResult.incidents.day} / ${result.todayResult.incidents.night}. \n
-    Day / night incidents in the last month: ${result.monthResult.incidents.day * 30} / ${result.monthResult.incidents.night * 30}. \n
-    Availability in the last 24 hours: ${(1 - result.todayResult.downtime) * 100} \n
-    Availability in the last month: ${(1 - result.monthResult.downtime) * 100} \n
+    Day : night incidents in the last 24h - ${result.todayResult.incidents.day} : ${result.todayResult.incidents.night}. \n
+    Day : night incidents in the last month - ${result.monthResult.incidents.day * 30} : ${result.monthResult.incidents.night * 30}. \n
+    Availability in the last 24 hours: ${(1 - result.todayResult.downtime) * 100}% \n
+    Availability in the last month: ${(1 - result.monthResult.downtime) * 100}% \n
     There's a score computed from today's data (graph) extracted with get_graph function and the score per month is calculated from the past 30 days already saved, \n
     and if they are not existent, then we compute the score of the missing days individually. The score per day takes into account the incidents per day and per night \n
     where the incidents per day are more valuable than those happening at night. So we scale our results to 100, where one incident per day would value '10' and \n
     the night incident would value '5'. \n
-    The score for a day would be: dayAvailability * (1 - dayIncidents * 0.1 - nightIncidents * 0.05). \n
-    The score for a month would be: monthAvailability * (1 - monthDayIncidents * 0.03 - monthNightIncidents * 0.01) \n`
+    The score for a day would be: dayAvailability * (1 - dayIncidents * 0.1 - nightIncidents * 0.05) = ${data.cmk1DayScore}. \n
+    The score for a month would be: monthAvailability * (1 - monthDayIncidents * 0.03 - monthNightIncidents * 0.01) = ${data.cmk30DaysScore}.\n`
 
     fs.outputFile(resultsLocation, fileText)
       .then(() => console.log(`Saved result for ${url}`))
@@ -213,12 +220,7 @@ async function getCheckmkScore(item, url) {
         console.log(`Error while computing checkmk score for ${url}`, err);
       });
 
-    // compute score for url
-    let data = {};
-    if (result !== undefined) {
-      data = computeScore(result);
-    }
-    console.log(`The current result for ${url} is ${data.cmk1DayScore} and the 30 day result is ${data.cmk30DaysScore}`);
+
     return data;
   } catch (err) {
     console.log(`Failed to get checkmk graph for ${url}`, err);
