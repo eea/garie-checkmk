@@ -177,7 +177,7 @@ function computeScore(input) {
   result.cmk1DayScore = Math.max(0, availability * (1 - input.todayResult.incidents.day * 0.1 - input.todayResult.incidents.night * 0.05));
 
   availability = (1 - input.monthResult.downtime) * 100;
-  result.cmk30DaysScore = Math.max(0, availability * (1 - input.monthResult.incidents.day * 0.03 - input.monthResult.incidents.night * 0.01));
+  result.cmk30DaysScore = Math.max(0, availability * (1 - input.monthResult.incidents.day * 30 * 0.03 - input.monthResult.incidents.night * 30 * 0.01));
 
   return result;
 }
