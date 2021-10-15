@@ -31,7 +31,7 @@ function getDownTime(ansArray) {
   let incidents = {
     day: 0, night:0
   };
-  if (ansArray.length === 0) return {downtime: 0, incidents};
+  if (ansArray.length === 0) return {};
 
 
   let gap = GAP_BETWEEN_INCIDENTS;
