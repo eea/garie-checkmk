@@ -173,13 +173,12 @@ function computeScore(input) {
   if (input.todayResult === undefined || input.monthResult === undefined) {
     return result;
   }
-  result.cmk1DayScore = ((100 - input.todayResult.incidents.day * 10) /100 * (100 - input.todayResult.incidents.night * 5) /100) * 100;
-  if (input.monthResult.lastMonthScore === undefined) {
-    result.cmk30DaysScore = ((100 - input.monthResult.incidents.day * 10) /100 * (100 - input.monthResult.incidents.night * 5) /100) * 100;
-  } else {
-    const firstDay = ((100 - input.monthResult.firstDay.incidents.day * 10) /100 * (100 - input.monthResult.firstDay.incidents.night * 5) /100) * 100;
-    result.cmk30DaysScore = (input.monthResult.lastMonthScore * 30 - firstDay + result.cmk1DayScore)/30;
-  }
+  let availability = (1 - input.todayResult.downtime) * 100;
+  result.cmk1DayScore = Math.max(0, availability * (1 - input.todayResult.incidents.day * 0.1 - input.todayResult.incidents.night * 0.05));
+
+  availability = (1 - input.monthResult.downtime) * 100;
+  result.cmk30DaysScore = Math.max(0, availability * (1 - input.monthResult.incidents.day * 0.03 - input.monthResult.incidents.night * 0.01));
+
   return result;
 }
 
@@ -196,12 +195,17 @@ async function getCheckmkScore(item, url) {
     // get graph output for url;
     const result = await getResults(url);
 
-    const fileText = `Checkmk results for ${url}. Day / night incidents in the last 24h: ${result.todayResult.incidents.day} / ${result.todayResult.incidents.night}. \n
+    const fileText = `Checkmk results for ${url}.  \n
+    Day / night incidents in the last 24h: ${result.todayResult.incidents.day} / ${result.todayResult.incidents.night}. \n
     Day / night incidents in the last month: ${result.monthResult.incidents.day * 30} / ${result.monthResult.incidents.night * 30}. \n
+    Availability in the last 24 hours: ${(1 - result.todayResult.downtime) * 100} \n
+    Availability in the last month: ${(1 - result.monthResult.downtime) * 100} \n
     There's a score computed from today's data (graph) extracted with get_graph function and the score per month is calculated from the past 30 days already saved, \n
     and if they are not existent, then we compute the score of the missing days individually. The score per day takes into account the incidents per day and per night \n
-    where the incidents per day are more valuable than those happening at night. So we scale our results to 100, where one incident per day would value '10' and and \n
-    the night incident would value '5'. Day = ((100 - dayIncidents * 10) / 100 * (100 - nightIncidents * 5) / 100) * 100.`
+    where the incidents per day are more valuable than those happening at night. So we scale our results to 100, where one incident per day would value '10' and \n
+    the night incident would value '5'. \n
+    The score for a day would be: dayAvailability * (1 - dayIncidents * 0.1 - nightIncidents * 0.05). \n
+    The score for a month would be: monthAvailability * (1 - monthDayIncidents * 0.03 - monthNightIncidents * 0.01) \n`
 
     fs.outputFile(resultsLocation, fileText)
       .then(() => console.log(`Saved result for ${url}`))
