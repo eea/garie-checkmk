@@ -14,7 +14,7 @@ const SECRET = process.env.SECRET || "";
 
 let servByHost = {};
 let influx;
-const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 6;
+const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 30;
 
 // actual run cmd get graph
 function getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName) {
@@ -33,22 +33,27 @@ function getDownTime(ansArray) {
   };
   if (ansArray.length === 0) return {};
 
-
-  let gap = GAP_BETWEEN_INCIDENTS;
-  let lastVal = [];
   let obsIncident = false;
-  let timeIt = 300;
+  const nrOfPoints = ansArray[0].length;
+  const step = 24 * 60 / nrOfPoints;
+  let timeIt = step * 60;
 
-  ansArray = ansArray.filter((ans) => ans.length === 288);
-  const isIncident = (serviceValues) => serviceValues.length > 0 && serviceValues.reduce((previousValue, currentValue) => previousValue && (currentValue === 1 || currentValue === null || currentValue === undefined), true);
+  let gap = parseInt(GAP_BETWEEN_INCIDENTS / step);
 
-  for (let i = 0; i < 288; i++) {
+  ansArray = ansArray.filter((ans) => ans.length === nrOfPoints);
+  const isIncident = (serviceValues) => serviceValues.length > 0 && serviceValues.reduce((previousValue, currentValue) => previousValue && (currentValue <= 1 || currentValue === null || currentValue === undefined), true);
+  let consecutiveIncidents = 0;
+
+  for (let i = 0; i < nrOfPoints; i++) {
     const serviceValues = ansArray.map((service) => service[i]);
     if (isIncident(serviceValues)) {
+      consecutiveIncidents++;
       mark_incident++;
+
+      // this checks the period of one incident; it has to be greater than 5 minutes;
       if (obsIncident) {
-        gap = process.env.GAP_BETWEEN_INCIDENTS || 6;
-      } else if (isIncident(lastVal)) {
+        gap = parseInt(GAP_BETWEEN_INCIDENTS / step);
+      } else if (consecutiveIncidents * step > 5) { // count as incident only if duration of downtime is larger than 5 minutes
         if (timeIt > 25200 || timeIt < 7200) { // incident during the day
           incidents.day++;
         } else {
@@ -60,18 +65,19 @@ function getDownTime(ansArray) {
       if (gap >= 1) {
         gap--;
       } else {
-        gap = process.env.GAP_BETWEEN_INCIDENTS || 6;
+        gap = parseInt(GAP_BETWEEN_INCIDENTS / step);
         obsIncident = false;
+        consecutiveIncidents = 0;
       }
+
     }
     
-    lastVal = serviceValues;
-    timeIt += 300;
+    timeIt += step * 60;
 
   }
 
   const result = {
-    downtime: mark_incident / 288,
+    downtime: mark_incident / nrOfPoints,
     incidents,
   }
   return result;
