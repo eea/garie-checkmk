@@ -185,10 +185,6 @@ function computeScore(input) {
     'cmk30DaysScore': -1
   };
 
-  if (input.todayResult === undefined || input.monthResult === undefined
-    || input.todayResult.incidents === undefined || input.monthResult.incidents === undefined) {
-    return result;
-  }
   let availability = (1 - input.todayResult.downtime) * 100;
   result.cmk1DayScore = Math.max(0, availability * (1 - input.todayResult.incidents.day * 0.1 - input.todayResult.incidents.night * 0.05));
 
