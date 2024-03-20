@@ -9,7 +9,7 @@ services:
             - INFLUXDB_ADMIN_PASSWORD=admin
 
     garie-plugin:
-        image: 'eeacms/garie-plugin:latest'
+        image: 'eeacms/garie-checkmk:latest'
         privileged: true
         volumes:
             - /var/run/docker.sock:/run/docker.sock
