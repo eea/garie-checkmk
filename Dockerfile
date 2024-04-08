@@ -1,4 +1,4 @@
-FROM node:12.14-stretch
+FROM node:12.22-stretch
 
 RUN mkdir -p /usr/src/garie-plugin
 RUN mkdir -p /usr/src/garie-plugin/reports

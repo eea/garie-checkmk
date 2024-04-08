@@ -20,6 +20,11 @@ services:
             - 3000:3000
         environment:
             - HOST=influxdb
+            - CMK_SERVERS=goldeneye.eea.europa.eu,goldeneye-aws.eea.europa.eu
+            - CMK_SITE_NAMES=omdeea,omdeeaaws
+            - CMK_SECRETS=secret1,secret2
+            - TZ=Europe/Copenhagen
+            - CMK_USERNAMES=cmkapi-omdeea,cmkapi-omdeeaaws
         depends_on:
             - influxdb
 

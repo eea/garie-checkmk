@@ -3,36 +3,75 @@ const path = require('path');
 const config = require('../config');
 const fs = require('fs-extra');
 const { execSync } = require('child_process');
+const fetch = require('node-fetch');
 const URL = require('url').URL;
 
-const CMK_SERVER = process.env.CMK_SERVER || "goldeneye.eea.europa.eu";
+const CMK_SERVERS = process.env.CMK_SERVERS || "goldeneye.eea.europa.eu,goldeneye-aws.eea.europa.eu";
 const CMK_SITES = process.env.CMK_SITE_NAMES || "omdeea,omdeeaaws";
-const CMK_SITE_NAMES = CMK_SITES.split(',');
+const CMK_SECRETS = process.env.CMK_SECRETS || "secret1,secret2";
+const CMK_USERNAMES = process.env.CMK_USERNAMES || "cmkapi-omdeea,cmkapi-omdeeaaws";
 
-const USERNAME = process.env.USERNAME_CHECKMK || "cmkapi-omdeea";
-const SECRET = process.env.SECRET || "";
+let SERVER_CONFIG;
 
-let servByHost = {};
+let servicesAsList;
+
 let influx;
 const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 30;
 
-// actual run cmd get graph
-function getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName) {
-  const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_graph&_username=${USERNAME}&_secret=${SECRET}"`; 
-  const bash_func = `curl ${API_URL} -d 'request={"specification":["template", {"service_description":"${serviceNeeded}","site":"${cmkSiteName}","graph_index":0,"host_name":"${host}"}], "data_range":{"time_range":[${startTime}, ${endTime}]}}'`;
-  const stdout =  execSync(bash_func);
-  return JSON.parse(stdout);
+const getAllServicesAsList = (list) => list.reduce((acc, server) => {
+  server.hosts.forEach((host) => {
+    acc = acc.concat(host.services.map((service) => ({ ...service, host_name: host.name, site_name: server.site_name })))
+  });
+  return acc;
+}, []);
+
+async function getGraph(startDate, endDate, service) {
+
+  // we only calculate graph for time metric
+  if (!service.metrics.includes("time")) {
+    console.log(`Service ${service.service} does not have time metric`)
+    return;
+  }
+
+  const serverConfig = SERVER_CONFIG.find((host) => host.site_name === service.site_name);
+  const partial_url = "check_mk/api/1.0/domain-types/metric/actions/get/invoke";
+
+  const headers = new fetch.Headers({
+    "Authorization": `Bearer ${serverConfig.checkmk_username} ${serverConfig.secret}`,
+    "Content-Type": "application/json"
+  })
+  const API_URL = new URL(`/${serverConfig.site_name}/${partial_url}`, `https://${serverConfig.server}`);
+  const body = {
+    "time_range": {
+      "start": startDate,
+      "end": endDate
+    },
+    "reduce": "min",
+    "site": service.site_name,
+    "host_name": service.host_name,
+    "service_description": service.description,
+    "type": "predefined_graph",
+    "graph_id": "METRIC_response_time"
+  }
+
+  response = await fetch(API_URL, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(body)
+  });
+
+  jsonResponse = await response.json()
+  return jsonResponse;
 }
 
 function getDownTime(ansArray) {
-
-
-  let  mark_incident = 0;
+  let mark_incident = 0;
   let incidents = {
-    day: 0, night:0
+    day: 0, night: 0
   };
-  if (ansArray.length === 0) return {};
-
+  if (ansArray.length === 0) {
+    return {};
+  }
   let obsIncident = false;
   const nrOfPoints = ansArray[0].length;
   const step = 24 * 60 / nrOfPoints;
@@ -61,7 +100,7 @@ function getDownTime(ansArray) {
         }
         obsIncident = true;
       }
-    } else if(obsIncident){
+    } else if (obsIncident) {
       if (gap >= 1) {
         gap--;
       } else {
@@ -71,7 +110,7 @@ function getDownTime(ansArray) {
       }
 
     }
-    
+
     timeIt += step * 60;
 
   }
@@ -83,85 +122,77 @@ function getDownTime(ansArray) {
   return result;
 }
 
-function getDayResults(services, offset) {
+async function getDayResults(services, offset) {
   const endDate = new Date();
   endDate.setUTCHours(0, 0, 0, 0);
   endDate.setUTCMinutes(endDate.getTimezoneOffset());  // use TZ time by setting the offset
   endDate.setUTCDate(endDate.getUTCDate() + offset);
   const startDate = new Date(endDate.getTime());
   startDate.setUTCDate(endDate.getUTCDate() - 1);
-  const endTime = Math.floor(endDate.getTime() / 1000);
-  const startTime = Math.floor(startDate.getTime() / 1000);
 
-  return getDownTime(services.map(({serviceNeeded, host, cmkSiteName}) => getGraph(startTime, endTime, serviceNeeded, host, cmkSiteName))
-              .filter((graph) => graph !== undefined && graph['result'] !== undefined && graph['result']['curves'] !== undefined)
-              .map((graph) => graph['result']['curves'][0]['rrddata']));
+  const graphs = await Promise.all(services.map((service) => getGraph(startDate, endDate, service)))
+
+  const processedGraphs = graphs.filter((graph) => graph && graph.metrics && graph.metrics.length).map((graph) => graph.metrics[0] && graph.metrics[0].data_points || [])
+
+  return getDownTime(processedGraphs);
 }
 
-function getMonthResults(services) {
+async function getMonthResults(services) {
   let result = {
-    downtime:0,
-    incidents:{
-      day:0,
-      night:0
+    downtime: 0,
+    incidents: {
+      day: 0,
+      night: 0
     }
   };
   for (i = 30; i > 0; --i) {
-    partial = getDayResults(services, -(i-1));
+    partial = await getDayResults(services, -(i - 1));
+    if (Object.keys(partial).length == 0) {
+      continue;
+    }
     result.downtime += partial.downtime;
     result.incidents.day += partial.incidents.day;
     result.incidents.night += partial.incidents.night;
   }
   result.downtime /= 30;
-  result.incidents.day /=30;
-  result.incidents.night /=30;
+  result.incidents.day /= 30;
+  result.incidents.night /= 30;
 
   return result;
 }
 
-function getParams(url) {
-  const urlObj = new URL(url);
-  siteName = urlObj.hostname;
-  let host;
-  let serviceNeeded;
-  let site;
-
+function getServicesForUrl(url) {
+  const url_hostname = new URL(url).hostname;
   let foundOne = false;
+  let multipleServices = [];
+  let serviceNeeded = [];
 
-  const multipleServices= [];
-
-  for (const key in servByHost) {
-    for (const cmkSite in servByHost[key]) {
-      for (const {service, cmd} of servByHost[key][cmkSite]) {
-        if (cmd.endsWith(`'${siteName}'`) && (!foundOne || service.includes(`${siteName}`))) {
-          foundOne = true;
-          host = key;
-          serviceNeeded = service;
-          site = cmkSite;
-          if (service.includes("cachet")) {
-            multipleServices.push({serviceNeeded, host, cmkSiteName:site});
-          }
-        }
+  servicesAsList.forEach((service) => {
+    const cond = service.cmd.endsWith(url_hostname) && (!foundOne || service.service.includes(url_hostname));
+    if (cond) {
+      foundOne = true;
+      serviceNeeded = [service]
+      if (service.service.includes("cachet")) {
+        multipleServices.push(service);
       }
     }
-  }
+  });
 
-  if (multipleServices.length > 0) {
+  if (multipleServices.length) {
+    // why do we care about cachet ? what is cachet ?
     return multipleServices;
   }
 
-  return [{serviceNeeded, host, cmkSiteName:site}];
+  return serviceNeeded;
 }
 
-
 async function getResults(url) {
-  const services = getParams(url);
-
+  const services = getServicesForUrl(url);
   let monthResult;
   try {
     const lastScore = await garie_plugin.utils.helpers.getLastEntry(influx, 'checkmk', 'cmk30DaysScore', 'score');
     if (lastScore === -1 || lastScore === undefined) {
-      monthResult = getMonthResults(services); 
+      monthResult = await getMonthResults(services);
     } else {
       monthResult = lastScore;
     }
@@ -170,8 +201,8 @@ async function getResults(url) {
   }
 
   let todayResult;
-  try{
-    todayResult = getDayResults(services, 0);
+  try {
+    todayResult = await getDayResults(services, 0);
   } catch (err) {
     console.log(`Could not compute today's result for ${url}`, err);
   }
@@ -185,20 +216,21 @@ function computeScore(input) {
     'cmk30DaysScore': -1
   };
 
-  let availability = (1 - input.todayResult.downtime) * 100;
-  result.cmk1DayScore = Math.max(0, availability * (1 - input.todayResult.incidents.day * 0.1 - input.todayResult.incidents.night * 0.05));
+  if (!!Object.keys(input.todayResult).length) {
+    let availability = (1 - input.todayResult.downtime) * 100;
+    result.cmk1DayScore = Math.max(0, availability * (1 - input.todayResult.incidents.day * 0.1 - input.todayResult.incidents.night * 0.05));
+  }
 
-  availability = (1 - input.monthResult.downtime) * 100;
-  result.cmk30DaysScore = Math.max(0, availability * (1 - input.monthResult.incidents.day * 30 * 0.03 - input.monthResult.incidents.night * 30 * 0.01));
+  if (!!Object.keys(input.monthResult).length) {
+    availability = (1 - input.monthResult.downtime) * 100;
+    result.cmk30DaysScore = Math.max(0, availability * (1 - input.monthResult.incidents.day * 30 * 0.03 - input.monthResult.incidents.night * 30 * 0.01));
+  }
 
   return result;
 }
 
 
 async function getCheckmkScore(item, url) {
-  if (SECRET.length < 1) {
-    throw "Can not log into Checkmk server to get data.";
-  }
   try {
     const { reportDir } = item;
     const reportFolder = garie_plugin.utils.helpers.reportDirNow(reportDir);
@@ -244,12 +276,10 @@ async function getCheckmkScore(item, url) {
 
 }
 
-
 const myGetData = async (item) => {
   const { url } = item.url_settings;
   return new Promise(async (resolve, reject) => {
     try {
-      console.log("Start: ", url);
       data = await getCheckmkScore(item, url);
       resolve(data);
     } catch (err) {
@@ -259,79 +289,135 @@ const myGetData = async (item) => {
   });
 };
 
+async function getServicesForHost(server, site_name, headers, host) {
+  try {
+    console.log("Getting services for host: ", host)
+    const services_partial_url = `check_mk/api/1.0/objects/host/${host}/collections/services`;
 
+    const params = new URLSearchParams();
+    params.append("columns", "check_command");
+    params.append("columns", "description");
+    params.append("columns", "metrics")
 
-console.log("Start");
+    const SERVICES_API_URL = new URL(`/${site_name}/${services_partial_url}?` + params, `https://${server}`);
 
-function getServicesByHost(hostname, cmkSiteName) {
+    const service_response = await fetch(SERVICES_API_URL, {
+      method: 'GET',
+      headers: headers,
 
-  
-  const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_metrics_of_host&_username=${USERNAME}&_secret=${SECRET}"`;
-  const bash_func = `curl ${API_URL} -d 'request={"hostname":"${hostname}", "site_id":"${cmkSiteName}"}'`;
+    });
+    const service_jsonResponse = await service_response.json();
+    const services = service_jsonResponse["value"];
+
+    let filtered_services = new Set();
+    for (const service of services) {
+      if (service["title"].toLowerCase().includes("http")) {
+        filtered_services.add({
+          "service": service["title"],
+          "description": service["extensions"]["description"],
+          "cmd": service["extensions"]["check_command"],
+          "metrics": service["extensions"]["metrics"]
+        });
+      }
+    }
+
+    return filtered_services;
+
+  } catch (err) {
+    console.log(`Could not get service for host ${host} from checkmk.`, err);
+  }
+}
+
+async function getHosts() {
+  const additional_hosts = config.plugins.checkmk.additional_hosts;
 
   try {
-    const stdout = execSync(bash_func);
-    const response = JSON.parse(stdout);
-    
-    const services = response["result"];
-    for (let key in services) {
-      if (key.includes("http") || key.includes("HTTP")) {
-          servByHost[hostname] = servByHost[hostname] || {};
-          const servs = servByHost[hostname][cmkSiteName] || [];
-          servs.push({
-              service: key,
-              cmd: services[key]['check_command'],
-          });
-          servByHost[hostname][cmkSiteName] = servs;
+    const partial_url = "check_mk/api/1.0/domain-types/host/collections/all"
+
+    for (const server_info of SERVER_CONFIG) {
+      let hosts = new Set();
+      const { server, site_name, secret, checkmk_username } = server_info;
+      console.log(`Getting hosts for server ${server} from checkmk.`);
+
+      if (secret === 0) {
+        throw "Could not log into checkmk server to get data.";
+      }
+
+      const API_URL = new URL(`/${site_name}/${partial_url}`, `https://${server}`);
+      const headers = new fetch.Headers({
+        "Authorization": `Bearer ${checkmk_username} ${secret}`,
+        "Content-Type": "application/json"
+      })
+
+
+      const response = await fetch(API_URL, {
+        method: 'GET',
+        headers: headers
+      })
+
+      const jsonResponse = await response.json();
+
+
+      for (const host of jsonResponse["value"]) {
+        if (host["title"] !== host["extensions"]["name"]) {
+          console.log("Host: ", host["title"], host["extentions"]);
+        }
+        // why the -f?
+        if (host["title"].includes('-f') || additional_hosts.includes(host["title"])) {
+          hosts.add(host["title"]);
+        }
+      }
+
+      for (const host of hosts) {
+        services = await getServicesForHost(server, site_name, headers, host);
+        server_info["hosts"].push({
+          "name": host,
+          "services": [...services]
+        });
       }
     }
 
   } catch (err) {
-    console.log('Could not get services by host', err);
-  }
-
-}
-
-function getHosts() {
-  if (SECRET.length === 0) {
-    throw "Could not log into checkmk server to get data.";
-  }
-  
-  const additional_hosts = config.plugins.checkmk.additional_hosts;
-  try {
-      const API_URL = `"https://${CMK_SERVER}/omdeea/check_mk/webapi.py?action=get_host_names&_username=${USERNAME}&_secret=${SECRET}"`;
-      const bash_func = `curl ${API_URL}`;
-      const stdout =  execSync(bash_func);
-      const response = JSON.parse(stdout);
-
-      const all_hosts = response["result"];
-      let hosts = new Set();
-      for (const host of all_hosts) {
-        if (host.includes('-f') || additional_hosts.includes(host)) {
-          hosts.add(host);
-        }
-      }
-      for (const host of hosts) {
-        for (const cmkSiteName of CMK_SITE_NAMES) {
-          getServicesByHost(host, cmkSiteName);
-        }
-      }
-  } catch(err) {
     console.log("Could not get hosts from checkmk.", err);
   }
 }
 
+
 const main = async () => {
   try {
-    
-    getHosts();
+    const cmk_servers_list = CMK_SERVERS.split(",");
+    const cmk_sites_list = CMK_SITES.split(",");
+    const cmk_secrets_list = CMK_SECRETS.split(",");
+    const cmk_usernames_list = CMK_USERNAMES.split(",");
+
+    const omdeea_config = {
+      "server": cmk_servers_list[0],
+      "site_name": cmk_sites_list[0],
+      "secret": cmk_secrets_list[0],
+      "checkmk_username": cmk_usernames_list[0],
+      "hosts": []
+    }
+    const omdeeaaws_config = {
+      "server": cmk_servers_list[1],
+      "site_name": cmk_sites_list[1],
+      "secret": cmk_secrets_list[1],
+      "checkmk_username": cmk_usernames_list[1],
+      "hosts": []
+    }
+
+    SERVER_CONFIG = [omdeea_config, omdeeaaws_config];
+
+    await getHosts();
+
+    servicesAsList = getAllServicesAsList(SERVER_CONFIG);
+
     const { app, influx_obj } = await garie_plugin.init({
-      getData:myGetData,
-      db_name:'checkmk',
-      plugin_name:'checkmk',
-      report_folder_name:'checkmk-results',
+      getData: myGetData,
+      db_name: 'checkmk',
+      plugin_name: 'checkmk',
+      report_folder_name: 'checkmk-results',
       app_root: path.join(__dirname, '..'),
-      config:config,
+      config: config,
       onDemand: false /* optional; set to "true" to enable scanning on demand */
     });
     app.listen(3000, () => {
