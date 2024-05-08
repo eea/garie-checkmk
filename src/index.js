@@ -302,21 +302,21 @@ async function getCheckmkScore(item, url) {
       return {};
     }
 
-    // As previosily stated in computeScore, we didn't find any case in which there were multiple services that matched the url.
-    // So for the sake of easy implementation I will just take the first service that matches the url here as well.
     const dayResults = result.todayResult;
     const monthResults = result.monthResult;
+
+    console.log(`The current result for ${url} is ${data.cmk1DayScore} and the 30 day result is ${data.cmk30DaysScore}`);
 
     const fileText = `Checkmk results for ${url}.\n
     Downtime in the last 24 hours: ${dayResults.totalDownTime.toFixed(2)}%. \n
     Downtime in the last month: ${monthResults.downtime.toFixed(2)}%. \n
-    Availability during workday in the last 24 hours: ${100 - dayResults.percentageDuringWorkDay.toFixed(2)}%. \n
-    Availability outside workday in the last 24 hours: ${100 - dayResults.percentageOutsideWorkDay.toFixed(2)}%. \n
-    Availability during workday in the last month: ${100 - monthResults.percentageDuringWorkDay.toFixed(2)}%. \n
-    Availability outside workday in the last month: ${100 - monthResults.percentageOutsideWorkDay.toFixed(2)}%. \n
+    Availability during workday in the last 24 hours: ${100 - (Math.round(dayResults.percentageDuringWorkDay * 100) / 100)}%. \n
+    Availability outside workday in the last 24 hours: ${100 - (Math.round(dayResults.percentageOutsideWorkDay * 100) / 100)}%. \n
+    Availability during workday in the last month: ${100 - (Math.round(monthResults.percentageDuringWorkDay * 100) / 100)}%. \n
+    Availability outside workday in the last month: ${100 - (Math.round(monthResults.percentageOutsideWorkDay * 100) / 100)}%. \n
     There is a score computed from the availability timeline during a given day. \n
     The score is calculated as score = 100 - (2 * percentageDuringWorkDay + percentageOutsideWorkDay) / 3. \n
-    This way, the availability during workday is 2 times more valuable than the availability outside workday. 3 for the 3 percentages combine\n.
+    This way, the availability during workday is 2 times more valuable than the availability outside workday. 3 for the 3 percentages combine.\n
     The same principle is applied for month score. \n
     The score for a day would be: ${data.cmk1DayScore}. \n
     The score for a month would be: ${data.cmk30DaysScore}.\n
