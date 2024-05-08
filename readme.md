@@ -6,7 +6,7 @@
 
 **Highlights**
 
--   Polls for checkmk metrics on given websites and stores the data into InfluxDB.
+-   Polls for checkmk availability on given websites and stores the data into InfluxDB.
 -   Obtains a score for each website, based on the time it was up, one for one day and one for one month (30 days).
 -   Setup within minutes.
 
@@ -67,7 +67,7 @@ Set variables as described in set variables and usage section.
 docker build -t garie-checkmk . && docker-compose up
 ```
 
-For dev environment, change the setup command.
+For dev environment, change the setup command. You must first change the CMK_SECRETS env variables with working the real ones, and then:
 ```sh
 docker-compose -f docker-compose-dev.yml up --build
 ```
@@ -78,6 +78,38 @@ On start garie-checkmk will query for all the hosts available on the checkmk ser
 
 For more information please go to the [Checkmk Documentation](https://docs.checkmk.com/latest/en/).
 
+
+
+
+## How it works
+
+Documentation for Checkmk REST-API can be found [here](https://goldeneye.eea.europa.eu/omdeea/check_mk/api/doc/)
+
+### Getting the hosts
+
+First of all, SERVER_CONFIG is set up, the hosts are pulled from each server.
+Using ["check_mk/api/1.0/domain-types/host/collections/all"](https://goldeneye.eea.europa.eu/omdeea/check_mk/api/doc/#operation/cmk.gui.plugins.openapi.endpoints.host.list_hosts) endpoint, all hosts from a specific server are gathered. After that, all hosts are filtered by the fallowing conditions:
+1. title of the host includes "-f"
+OR
+2. the host is defined in the config file, under "plugins.checkmk.additional_hosts"
+
+### Getting services for hosts
+
+After all hosts are gathered and filtered, for each individual hosts ["check_mk/api/1.0/objects/host/${host}/collections/services]("https://goldeneye.eea.europa.eu/omdeea/check_mk/api/doc/#operation/cmk.gui.plugins.openapi.endpoints.service._list_host_services") is used to get all the monitored services of that host. After that, each service of a host that contains "htpp" in its "check_command" attribute is stored.
+
+### Getting the availability for an URL
+
+For each url defined in config, the services gathered in the previous step are filtered to find if there are any that contains a perfect match for the given URL.
+
+If a match is found, then the timeline for a day (or each day of the last month for 30 days score) is collected. After that, getDownTimeFromTimelines is used to calculate the downtime percentage for each timeline, separated in percentageDuringWorkDay and percentageOutsideWorkDay.
+
+In this case, there is not a REST API endpoint available for timelines, so we use the multisite API approach and use the "export_csv" function of the "Availability timeline" view of a service from checkmk platform. Since this URL does not return any data using 'node-fetch', a CURL command is used to collect the data. The csv return is then parsed and send to getDownTimeFromTimelines for calculations.
+
+### Calculating the score
+
+After all data is collected, the score is calculated for both "today" and "month" results. The downtime during day is 2 time more important than one during night, so the formula for score is:
+
+availability = 100 - ((2 * todayResult.percentageDuringWorkDay + todayResult.percentageOutsideWorkDay) / 3)
 
 ## Data collected
 
@@ -119,10 +151,9 @@ oldest day score in the last 30 days with yesterday's score to update the last 3
 ## Variables
 These are the variables that should be set:
 
-- CMK_SERVER              - the checkmk server address(hostname) (default set to "goldeneye.eea.europa.eu").
-- CMK_SITE_NAMES           - the checkmk site names (default set to "omdeea").
-- USERNAME_CHECKMK, SECRET- the automation user\'s username and secret.
-- GAP_BETWEEN_INCIDENTS   - defaulting to 6, can be optionally modified, if necessary.
+- CMK_SERVERS              - the checkmk servers address(hostname) (default set to "goldeneye.eea.europa.eu,goldeneye-aws.eea.europa.eu").
+- CMK_SITE_NAMES           - the checkmk site names (default set to "omdeea,omdeeaaws").
+- CMK_USERNAMES, CMK_SECRETS- the API user\'s username and secret.
 
 To use them in the docker-compose way, add them to the garie-plugin service or use a .env file.
 

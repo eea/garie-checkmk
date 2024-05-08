@@ -11,8 +11,11 @@
         "start": "node ./src/index.js"
     },
     "dependencies": {
+        "csvtojson": "^2.0.10",
         "garie-plugin": "https://github.com/eea/garie-plugin#0.0.45",
-        "node-fetch": "^2.7.0"
+        "node-fetch": "^2.7.0",
+        "date-fns": "2.30.0",
+        "date-fns-tz": "2.0.1"
     },
     "devDependencies": {
         "codecov": "^3.0.0",

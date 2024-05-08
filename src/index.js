@@ -4,7 +4,11 @@ const config = require('../config');
 const fs = require('fs-extra');
 const { execSync } = require('child_process');
 const fetch = require('node-fetch');
+const csv = require('csvtojson');
 const URL = require('url').URL;
+const dateFns = require('date-fns');
+
+const { format, addHours, areIntervalsOverlapping, differenceInSeconds, fromUnixTime, isBefore, isAfter, subMinutes} = dateFns;
 
 const CMK_SERVERS = process.env.CMK_SERVERS || "goldeneye.eea.europa.eu,goldeneye-aws.eea.europa.eu";
 const CMK_SITES = process.env.CMK_SITE_NAMES || "omdeea,omdeeaaws";
@@ -16,7 +20,6 @@ let SERVER_CONFIG;
 let servicesAsList;
 
 let influx;
-const GAP_BETWEEN_INCIDENTS = process.env.GAP_BETWEEN_INCIDENTS || 30;
 
 const getAllServicesAsList = (list) => list.reduce((acc, server) => {
   server.hosts.forEach((host) => {
@@ -25,189 +28,178 @@ const getAllServicesAsList = (list) => list.reduce((acc, server) => {
   return acc;
 }, []);
 
-async function getGraph(startDate, endDate, service) {
+function getDownTimeFromTimelines(serviceWithTimeline, startDate) {
+  // Possible states: OK WARN CRIT UNKNOWN H.Down
 
-  // we only calculate graph for time metric
-  if (!service.metrics.includes("time")) {
-    console.log(`Service ${service.service} does not have time metric`)
-    return;
-  }
+  // we start day at 00:00
+  const dayStart = new Date(startDate.setUTCHours(0, 0, 0, 0));
 
-  const serverConfig = SERVER_CONFIG.find((host) => host.site_name === service.site_name);
-  const partial_url = "check_mk/api/1.0/domain-types/metric/actions/get/invoke";
+  // start of work day at 8am
+  const startOfWorkDay = addHours(dayStart, 8);
 
-  const headers = new fetch.Headers({
-    "Authorization": `Bearer ${serverConfig.checkmk_username} ${serverConfig.secret}`,
-    "Content-Type": "application/json"
-  })
-  const API_URL = new URL(`/${serverConfig.site_name}/${partial_url}`, `https://${serverConfig.server}`);
-  const body = {
-    "time_range": {
-      "start": startDate,
-      "end": endDate
-    },
-    "reduce": "min",
-    "site": service.site_name,
-    "host_name": service.host_name,
-    "service_description": service.description,
-    "type": "predefined_graph",
-    "graph_id": "METRIC_response_time"
-  }
+  // end of work day at 8pm
+  const endOfWorkDay = addHours(startOfWorkDay, 12);
 
-  response = await fetch(API_URL, {
-    method: 'POST',
-    headers: headers,
-    body: JSON.stringify(body)
-  });
+  let downTimeDuringWorkDay = 0;
+  let downTimeOutsideWorkDay = 0;
+  let totalDownTime = 0;
 
-  jsonResponse = await response.json()
-  return jsonResponse;
-}
+  for(const data of serviceWithTimeline.dayTimelineResults) {
+    //we don't count states that are not ok or host_down (scheduled downtime) 
+    if (!["ok", "host_down"].includes(data.state)) {
+      const from = fromUnixTime(data.from)
+      const fromOffset = from.getTimezoneOffset()
+      const utcFrom = subMinutes(from, fromOffset)
 
-function getDownTime(ansArray) {
-  let mark_incident = 0;
-  let incidents = {
-    day: 0, night: 0
-  };
-  if (ansArray.length === 0) {
-    return {};
-  }
-  let obsIncident = false;
-  const nrOfPoints = ansArray[0].length;
-  const step = 24 * 60 / nrOfPoints;
-  let timeIt = step * 60;
+      const until = fromUnixTime(data.until)
+      const untilOffset = until.getTimezoneOffset()
+      const utcUntil = subMinutes(until, untilOffset)
 
-  let gap = parseInt(GAP_BETWEEN_INCIDENTS / step);
+      const percentage = Number(data.duration_text.replace("%", ""))
+      totalDownTime += percentage
+      const downtimeInSeconds = differenceInSeconds(utcUntil, utcFrom);
+      
+      const isOverlappingInclusive = areIntervalsOverlapping(
+        { start: startOfWorkDay, end: endOfWorkDay },
+        { start: utcFrom, end: utcUntil },
+        { inclusive: true }
+      )
 
-  ansArray = ansArray.filter((ans) => ans.length === nrOfPoints);
-  const isIncident = (serviceValues) => serviceValues.length > 0 && serviceValues.reduce((previousValue, currentValue) => previousValue && (currentValue <= 1 || currentValue === null || currentValue === undefined), true);
-  let consecutiveIncidents = 0;
+      if (isOverlappingInclusive) {
+        downTimeDuringWorkDay += downtimeInSeconds;
+        continue;
+      }
 
-  for (let i = 0; i < nrOfPoints; i++) {
-    const serviceValues = ansArray.map((service) => service[i]);
-    if (isIncident(serviceValues)) {
-      consecutiveIncidents++;
-      mark_incident++;
+      const isOverlapping = areIntervalsOverlapping(
+        { start: startOfWorkDay, end: endOfWorkDay },
+        { start: utcFrom, end: utcUntil },
+        { inclusive: false }
+      )
 
-      // this checks the period of one incident; it has to be greater than 5 minutes;
-      if (obsIncident) {
-        gap = parseInt(GAP_BETWEEN_INCIDENTS / step);
-      } else if (consecutiveIncidents * step > 5) { // count as incident only if duration of downtime is larger than 5 minutes
-        if (timeIt > 25200 || timeIt < 7200) { // incident during the day
-          incidents.day++;
-        } else {
-          incidents.night++;
+      if (isOverlapping) {
+        // left side overlapping (with start of work day)
+        if(isBefore(startOfWorkDay, utcUntil)){
+          const workDayOverlap = differenceInSeconds(utcUntil, startOfWorkDay)
+          downTimeDuringWorkDay += workDayOverlap
+          const outsideWorkDayOverlap = differenceInSeconds(startOfWorkDay, utcFrom)
+          downTimeOutsideWorkDay += outsideWorkDayOverlap
+          continue;
         }
-        obsIncident = true;
+        // right side overlapping (with end of work day)
+        if(isAfter(endOfWorkDay, utcFrom)){
+          const workDayOverlap = differenceInSeconds(endOfWorkDay, utcFrom)
+          downTimeDuringWorkDay += workDayOverlap
+          const outsideWorkDayOverlap = differenceInSeconds(utcUntil, endOfWorkDay)
+          downTimeOutsideWorkDay += outsideWorkDayOverlap
+          continue;
+        }
+        continue;
       }
-    } else if (obsIncident) {
-      if (gap >= 1) {
-        gap--;
-      } else {
-        gap = parseInt(GAP_BETWEEN_INCIDENTS / step);
-        obsIncident = false;
-        consecutiveIncidents = 0;
-      }
 
+      downTimeOutsideWorkDay += downtimeInSeconds;
     }
-
-    timeIt += step * 60;
-
   }
 
-  const result = {
-    downtime: mark_incident / nrOfPoints,
-    incidents,
+  const percentageDuringWorkDay = (downTimeDuringWorkDay / (24 * 60 * 60)) * 100;
+  const percentageOutsideWorkDay = (downTimeOutsideWorkDay / (24 * 60 * 60)) * 100;
+
+  return {
+    service: serviceWithTimeline.service,
+    percentageDuringWorkDay,
+    percentageOutsideWorkDay, 
+    totalDownTime,
   }
-  return result;
 }
 
-async function getDayResults(services, offset) {
-  const endDate = new Date();
-  endDate.setUTCHours(0, 0, 0, 0);
-  endDate.setUTCMinutes(endDate.getTimezoneOffset());  // use TZ time by setting the offset
-  endDate.setUTCDate(endDate.getUTCDate() + offset);
-  const startDate = new Date(endDate.getTime());
-  startDate.setUTCDate(endDate.getUTCDate() - 1);
+async function getDayResults(service, offset) {
+  const startDate = new Date();
+  startDate.setUTCHours(0, 0, 0, 0);
+  startDate.setUTCDate(startDate.getUTCDate() + offset);
 
-  const graphs = await Promise.all(services.map((service) => getGraph(startDate, endDate, service)))
-
-  const processedGraphs = graphs.filter((graph) => graph && graph.metrics && graph.metrics.length).map((graph) => graph.metrics[0] && graph.metrics[0].data_points || [])
-
-  return getDownTime(processedGraphs);
-}
-
-async function getMonthResults(services) {
-  let result = {
-    downtime: 0,
-    incidents: {
-      day: 0,
-      night: 0
-    }
-  };
-  for (i = 30; i > 0; --i) {
-    partial = await getDayResults(services, -(i - 1));
-    if (Object.keys(partial).length == 0) {
-      continue;
-    }
-    result.downtime += partial.downtime;
-    result.incidents.day += partial.incidents.day;
-    result.incidents.night += partial.incidents.night;
+  const serviceWithTimeline = {
+    ...service,
+    dayTimelineResults: await getDayTimelineResults(service, startDate)
   }
-  result.downtime /= 30;
-  result.incidents.day /= 30;
-  result.incidents.night /= 30;
-
-  return result;
+  return getDownTimeFromTimelines(serviceWithTimeline, startDate);
 }
 
-function getServicesForUrl(url) {
+async function getMonthResults(service) {
+  results = {
+    service: service.service,
+    percentageDuringWorkDay: 0,
+    percentageOutsideWorkDay: 0,
+    totalDownTime: 0,
+  }
+
+  for (i = 31; i > 1; --i) {
+    const partial = await getDayResults(service, -(i - 1));
+    results.percentageDuringWorkDay += partial.percentageDuringWorkDay;
+    results.percentageOutsideWorkDay += partial.percentageOutsideWorkDay;
+    results.totalDownTime += partial.totalDownTime;
+  }
+
+  return {
+    service: results.service,
+    downtime: results.totalDownTime / 30,
+    percentageDuringWorkDay: results.percentageDuringWorkDay / 30,
+    percentageOutsideWorkDay: results.percentageOutsideWorkDay / 30,
+  }
+}
+
+function getServiceForUrl(url) {
   const url_hostname = new URL(url).hostname;
   let foundOne = false;
-  let multipleServices = [];
-  let serviceNeeded = [];
+  let serviceNeeded = undefined;
+  multipleServices = [];
 
   servicesAsList.forEach((service) => {
-    const cond = service.cmd.endsWith(url_hostname) && (!foundOne || service.service.includes(url_hostname));
+    const cond = service.cmd.endsWith(` ${url_hostname}`) && (!foundOne || service.service.includes(url_hostname));
     if (cond) {
       foundOne = true;
-      serviceNeeded = [service]
-      if (service.service.includes("cachet")) {
-        multipleServices.push(service);
-      }
+      multipleServices.push(service);
     }
   });
-
-  if (multipleServices.length) {
-    // why do we care about cachet ? what is cachet ?
-    return multipleServices;
+  
+  if (multipleServices.length >= 1) {
+    // we prefer services that are not cachet
+    const found = multipleServices.find((service) => !service.service.includes("cachet"));
+    if (found) {
+      serviceNeeded = found;
+    } else {
+      // but if all the services are cachet we just take the first one
+      serviceNeeded = multipleServices[0];
+    }
   }
 
   return serviceNeeded;
 }
 
 async function getResults(url) {
-  const services = getServicesForUrl(url);
-  let monthResult;
-  try {
-    const lastScore = await garie_plugin.utils.helpers.getLastEntry(influx, 'checkmk', 'cmk30DaysScore', 'score');
-    if (lastScore === -1 || lastScore === undefined) {
-      monthResult = await getMonthResults(services);
-    } else {
-      monthResult = lastScore;
-    }
-  } catch (err) {
-    console.log("Could not get last saved score for month ", err);
+  const service = getServiceForUrl(url);
+  if (!service) {
+    console.log(`Could not find service for url ${url}`);
+    return undefined;
   }
 
-  let todayResult;
-  try {
-    todayResult = await getDayResults(services, 0);
+  try {  
+    let monthResult;
+    try {
+      const lastScore = await garie_plugin.utils.helpers.getLastEntry(influx, 'checkmk', 'cmk30DaysScore', 'score');
+      if (lastScore === -1 || lastScore === undefined) {
+        monthResult = await getMonthResults(service);
+      } else {
+        monthResult = lastScore;
+      }
+    } catch (err) {
+      console.log("Could not get last saved score for month ", err);
+    }
+
+    const todayResult = await getDayResults(service, 0);
+    return { monthResult, todayResult };
+
   } catch (err) {
     console.log(`Could not compute today's result for ${url}`, err);
   }
-
-  return { monthResult, todayResult };
 }
 
 function computeScore(input) {
@@ -217,18 +209,76 @@ function computeScore(input) {
   };
 
   if (!!Object.keys(input.todayResult).length) {
-    let availability = (1 - input.todayResult.downtime) * 100;
-    result.cmk1DayScore = Math.max(0, availability * (1 - input.todayResult.incidents.day * 0.1 - input.todayResult.incidents.night * 0.05));
+    const todayResult = input.todayResult;
+    const availability = 100 - ((2 * todayResult.percentageDuringWorkDay + todayResult.percentageOutsideWorkDay) / 3);
+    result.cmk1DayScore = availability.toFixed(2);
   }
 
   if (!!Object.keys(input.monthResult).length) {
-    availability = (1 - input.monthResult.downtime) * 100;
-    result.cmk30DaysScore = Math.max(0, availability * (1 - input.monthResult.incidents.day * 30 * 0.03 - input.monthResult.incidents.night * 30 * 0.01));
+    const monthResult = input.monthResult;
+    const availability = 100 - ((2 * monthResult.percentageDuringWorkDay + monthResult.percentageOutsideWorkDay) / 3);
+    result.cmk30DaysScore = availability.toFixed(2);
   }
 
+  result.service_name = input.todayResult.service;
   return result;
 }
 
+function computeUrl(service, startDate, serverConfig) {
+  const partial_url = `${serverConfig.site_name}/check_mk/view.py`;
+  
+  const params = new URLSearchParams();
+
+  params.append("apply", "Apply");
+  params.append("av_mode", "timeline");
+  params.append("avo_av_levels_value_0", "99.000");
+  params.append("avo_av_levels_value_1", "95.000");
+  params.append("avo_dateformat", "881e08f81c4190714d51ec7b5d16992a0cb6b6012149a98e7c7356b901952cbf");
+  params.append("avo_grouping", "dc937b59892604f5a86ac96936cd7ff09e25f18ae6b758e8014a24c7fa039e91");
+  params.append("avo_labelling", "1");
+  params.append("avo_outage_statistics_0", "1");
+  params.append("avo_outage_statistics_1", "1");
+  params.append("avo_rangespec_16_days", "0");
+  params.append("avo_rangespec_16_hours", "0");
+  params.append("avo_rangespec_16_minutes", "0");
+  params.append("avo_rangespec_16_seconds", "0");
+
+  params.append("avo_rangespec_17_0_day", format(startDate, "d"));
+  params.append("avo_rangespec_17_0_month", format(startDate, "M"));
+  params.append("avo_rangespec_17_0_year", format(startDate, "y"));
+  params.append("avo_rangespec_17_1_day", format(startDate, "d"));
+  params.append("avo_rangespec_17_1_month", format(startDate, "M"));
+  params.append("avo_rangespec_17_1_year", format(startDate, "y"));
+  params.append("avo_rangespec_sel", "17");
+  params.append("avo_summary", "0e04b5ba903e6b68f52e38e4ca1c40ce2a9fc04e1ff36133e35499378ac4b7f7");
+  params.append("avo_timeformat_0", "c4e12aa4e018b4d2a2942a7bc7f250c5dd49b55e361c8843a9c6612393c3bad5");
+  params.append("avo_timeformat_1", "a4223a433eb3597d6ccb9fcd7a67b600fdf8d303965ee6ebdb92b86f324d0045");
+  params.append("avo_timeformat_2", "c79ce24dccedc25c4bb147dc9fa76a5ff89fd5d76aada1c28494c1e63c63f228");
+  params.append("avoptions", "set");
+  params.append("filled_in", "avoptions_display");
+  params.append("host", service.host_name);
+  params.append("mode", "availability");
+  params.append("output_format", "csv_export");
+  params.append("service", service.description);
+  params.append("view_name", "service");
+
+  const API_URL = new URL(`/${partial_url}?` + params, `https://${serverConfig.server}`);
+
+  return API_URL;
+}
+
+async function getDayTimelineResults(service, startDate) {
+  const serverConfig = SERVER_CONFIG.find((host) => host.site_name === service.site_name);
+  const timelineUrl = computeUrl(service, startDate, serverConfig);
+  const auth = `--header "Authorization: Bearer ${serverConfig.checkmk_username} ${serverConfig.secret}"`;
+  const contentType = '--header "Content-Type: text/csv;charset=UTF-8"';
+  const curlCommand = `curl -G ${contentType} ${auth} "${timelineUrl.href}"`;
+  const stdout =  execSync(curlCommand);
+
+  return await csv({delimiter: ";"})
+  .fromString(stdout.toString("utf-8"))
+  .then((jsonObj) => {return jsonObj});
+}
 
 async function getCheckmkScore(item, url) {
   try {
@@ -236,30 +286,41 @@ async function getCheckmkScore(item, url) {
     const reportFolder = garie_plugin.utils.helpers.reportDirNow(reportDir);
     const resultsLocation = path.join(reportFolder, '/checkmk.txt');
 
-    // get graph output for url;
+    // get availability percentage for url;
     const result = await getResults(url);
 
     // compute score for url
     let data = {};
     if (result !== undefined) {
       data = computeScore(result);
+    } else {
+      console.log(`Could not get results for ${url}`);
+      return {};
     }
-    console.log(`The current result for ${url} is ${data.cmk1DayScore} and the 30 day result is ${data.cmk30DaysScore}`);
 
     if (data.cmk30DaysScore < 0 || data.cmk1DayScore < 0) {
-      return data;
+      return {};
     }
-    const fileText = `Checkmk results for ${url}.  \n
-    Day : night incidents in the last 24h - ${result.todayResult.incidents.day} : ${result.todayResult.incidents.night}. \n
-    Day : night incidents in the last month - ${result.monthResult.incidents.day * 30} : ${result.monthResult.incidents.night * 30}. \n
-    Availability in the last 24 hours: ${(1 - result.todayResult.downtime) * 100}% \n
-    Availability in the last month: ${(1 - result.monthResult.downtime) * 100}% \n
-    There's a score computed from today's data (graph) extracted with get_graph function and the score per month is calculated from the past 30 days already saved, \n
-    and if they are not existent, then we compute the score of the missing days individually. The score per day takes into account the incidents per day and per night \n
-    where the incidents per day are more valuable than those happening at night. So we scale our results to 100, where one incident per day would value '10' and \n
-    the night incident would value '5'. \n
-    The score for a day would be: dayAvailability * (1 - dayIncidents * 0.1 - nightIncidents * 0.05) = ${data.cmk1DayScore}. \n
-    The score for a month would be: monthAvailability * (1 - monthDayIncidents * 0.03 - monthNightIncidents * 0.01) = ${data.cmk30DaysScore}.\n`
+
+    // As previosily stated in computeScore, we didn't find any case in which there were multiple services that matched the url.
+    // So for the sake of easy implementation I will just take the first service that matches the url here as well.
+    const dayResults = result.todayResult;
+    const monthResults = result.monthResult;
+
+    const fileText = `Checkmk results for ${url}.\n
+    Downtime in the last 24 hours: ${dayResults.totalDownTime.toFixed(2)}%. \n
+    Downtime in the last month: ${monthResults.downtime.toFixed(2)}%. \n
+    Availability during workday in the last 24 hours: ${100 - dayResults.percentageDuringWorkDay.toFixed(2)}%. \n
+    Availability outside workday in the last 24 hours: ${100 - dayResults.percentageOutsideWorkDay.toFixed(2)}%. \n
+    Availability during workday in the last month: ${100 - monthResults.percentageDuringWorkDay.toFixed(2)}%. \n
+    Availability outside workday in the last month: ${100 - monthResults.percentageOutsideWorkDay.toFixed(2)}%. \n
+    There is a score computed from the availability timeline during a given day. \n
+    The score is calculated as score = 100 - (2 * percentageDuringWorkDay + percentageOutsideWorkDay) / 3. \n
+    This way, the availability during workday is 2 times more valuable than the availability outside workday. 3 for the 3 percentages combine\n.
+    The same principle is applied for month score. \n
+    The score for a day would be: ${data.cmk1DayScore}. \n
+    The score for a month would be: ${data.cmk30DaysScore}.\n
+    `
 
     fs.outputFile(resultsLocation, fileText)
       .then(() => console.log(`Saved result for ${url}`))
@@ -267,10 +328,9 @@ async function getCheckmkScore(item, url) {
         console.log(`Error while computing checkmk score for ${url}`, err);
       });
 
-
     return data;
   } catch (err) {
-    console.log(`Failed to get checkmk graph for ${url}`, err);
+    console.log(`Failed to get checkmk availability for ${url}`, err);
     throw err;
   }
 
@@ -304,12 +364,17 @@ async function getServicesForHost(server, site_name, headers, host) {
     const service_response = await fetch(SERVICES_API_URL, {
       method: 'GET',
       headers: headers,
-
     });
     const service_jsonResponse = await service_response.json();
     const services = service_jsonResponse["value"];
 
     let filtered_services = new Set();
+
+    if (!services) {
+      console.log(`No services found for host ${host} in checkmk.`);
+      return filtered_services;
+    }
+
     for (const service of services) {
       if (service["title"].toLowerCase().includes("http")) {
         filtered_services.add({
@@ -349,14 +414,12 @@ async function getHosts() {
         "Content-Type": "application/json"
       })
 
-
       const response = await fetch(API_URL, {
         method: 'GET',
         headers: headers
       })
 
       const jsonResponse = await response.json();
-
 
       for (const host of jsonResponse["value"]) {
         if (host["title"] !== host["extensions"]["name"]) {
@@ -370,10 +433,12 @@ async function getHosts() {
 
       for (const host of hosts) {
         services = await getServicesForHost(server, site_name, headers, host);
-        server_info["hosts"].push({
-          "name": host,
-          "services": [...services]
-        });
+        if (services.size > 0){
+          server_info["hosts"].push({
+            "name": host,
+            "services": [...services]
+          });
+        }
       }
     }
 
@@ -381,7 +446,6 @@ async function getHosts() {
     console.log("Could not get hosts from checkmk.", err);
   }
 }
-
 
 const main = async () => {
   try {
