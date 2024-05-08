@@ -210,14 +210,14 @@ function computeScore(input) {
 
   if (!!Object.keys(input.todayResult).length) {
     const todayResult = input.todayResult;
-    const availability = 100 - ((2 * todayResult.percentageDuringWorkDay + todayResult.percentageOutsideWorkDay) / 3);
-    result.cmk1DayScore = availability.toFixed(2);
+    const todayAvailability = 100 - ((2 * todayResult.percentageDuringWorkDay + todayResult.percentageOutsideWorkDay) / 3);
+    result.cmk1DayScore = Math.round(todayAvailability * 100) / 100;
   }
 
   if (!!Object.keys(input.monthResult).length) {
     const monthResult = input.monthResult;
-    const availability = 100 - ((2 * monthResult.percentageDuringWorkDay + monthResult.percentageOutsideWorkDay) / 3);
-    result.cmk30DaysScore = availability.toFixed(2);
+    const monthAvailability = 100 - ((2 * monthResult.percentageDuringWorkDay + monthResult.percentageOutsideWorkDay) / 3);
+    result.cmk30DaysScore = Math.round(monthAvailability * 100) / 100;
   }
 
   result.service_name = input.todayResult.service;
