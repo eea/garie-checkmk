@@ -147,18 +147,35 @@ async function getMonthResults(service) {
 }
 
 function getServiceForUrl(url) {
-  const url_hostname = new URL(url).hostname;
+  const url_obj = new URL(url);
+  const url_hostname = url_obj.hostname;
+  const url_pathname = url_obj.pathname;
   let foundOne = false;
   let serviceNeeded = undefined;
   multipleServices = [];
 
-  servicesAsList.forEach((service) => {
-    const cond = service.cmd.endsWith(` ${url_hostname}`) && (!foundOne || service.service.includes(url_hostname));
-    if (cond) {
-      foundOne = true;
-      multipleServices.push(service);
-    }
-  });
+  if (url_pathname === "/" || url_pathname === "" || url_pathname === undefined){
+    // if the url is just the hostname we search for services that end with the hostname
+    servicesAsList.forEach((service) => {
+      const cond = service.cmd.endsWith(` ${url_hostname}`) && (!foundOne || service.service.includes(url_hostname));
+      if (cond) {
+        foundOne = true;
+        multipleServices.push(service);
+      }
+    });
+  } else {
+    // but if the url has a path we search for services that end with the hostname and contain the path
+    // example of a command that would match:
+    // check_mk_active-http!-u /gemet/en/themes/ -t 15 --onredirect=follow --sni -I eionet.europa.eu -H eionet.europa.eu
+    // here the command ends with the hostname "eionet.europa.eu" and contains the path "/gemet/en/themes/
+    servicesAsList.forEach((service) => {
+      const cond = service.cmd.endsWith(` ${url_hostname}`) && service.cmd.includes(`${url_pathname}`) && (!foundOne || service.service.includes(url_hostname));
+      if (cond) {
+        foundOne = true;
+        multipleServices.push(service);
+      }
+    });
+  }
   
   if (multipleServices.length >= 1) {
     // we prefer services that are not cachet
