@@ -167,9 +167,12 @@ function getServiceForUrl(url) {
     // but if the url has a path we search for services that end with the hostname and contain the path
     // example of a command that would match:
     // check_mk_active-http!-u /gemet/en/themes/ -t 15 --onredirect=follow --sni -I eionet.europa.eu -H eionet.europa.eu
-    // here the command ends with the hostname "eionet.europa.eu" and contains the path "/gemet/en/themes/
+    // here the command ends with the hostname "eionet.europa.eu" and contains the path " /gemet/en/themes/ "
+    // the pathname includes spaces at the beginning and end to make sure we match the path exactly.
+    // this way, we avoid matching paths that contain the current path as a substring. For example, we don't want to match
+    // a path like "/gemet/en/themes/" when the current path is "/en/"
     servicesAsList.forEach((service) => {
-      const cond = service.cmd.endsWith(` ${url_hostname}`) && service.cmd.includes(`${url_pathname}`) && (!foundOne || service.service.includes(url_hostname));
+      const cond = service.cmd.endsWith(` ${url_hostname}`) && service.cmd.includes(` ${url_pathname} `) && (!foundOne || service.service.includes(url_hostname));
       if (cond) {
         foundOne = true;
         multipleServices.push(service);
